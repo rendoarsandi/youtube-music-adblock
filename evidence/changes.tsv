@@ -2,6 +2,7 @@
 1	hook:availability
 1	hook:cast-context
 1	hook:file-provider
+1	hook:gms-startup
 1	hook:prime
 1	hook:service-check
 28	string:com.google -> app.revanced

@@ -79,7 +79,7 @@ def validate_package(apk, merged, output, signed):
     if any(flag in manifest for flag in ["com.android.vending.splits.required", "isSplitRequired", "requiredSplitTypes"]):
         raise RuntimeError("Residual split requirement")
     with zipfile.ZipFile(merged) as before, zipfile.ZipFile(apk) as after:
-        if after.testzip() or len([name for name in after.namelist() if name.endswith(".dex")]) != 6:
+        if after.testzip() or len([name for name in after.namelist() if name.endswith(".dex")]) != 7:
             raise RuntimeError("Invalid APK CRC or DEX inventory")
         if any(name.startswith("assets/dexopt/baseline.prof") for name in after.namelist()):
             raise RuntimeError("Stale baseline profile retained")
@@ -122,6 +122,7 @@ def main():
     parser.add_argument("--keystore", type=Path, help="Reuse your private signing key")
     parser.add_argument("--password-file", type=Path, help="Private file containing the keystore password")
     parser.add_argument("--key-alias", default="local-experiment")
+    parser.add_argument("--d8-jar", type=Path, required=True, help="D8 compiler JAR for the startup dependency helper")
     args = parser.parse_args()
     required = ["java", "javac", "aapt", "zipalign"] + ([] if args.unsigned else ["apksigner", "keytool"])
     for command in required:
@@ -150,10 +151,17 @@ def main():
     classes.mkdir()
     classpath = os.pathsep.join(str(path) for path in jars)
     run(["javac", "-cp", classpath, "-d", classes, ROOT / "src/NonRootMusic.java"], output / "compile.log")
+    helper_classes = output / "helper-classes"
+    helper_classes.mkdir()
+    run(["javac", "--release", "8", "-Xlint:-options", "-d", helper_classes, ROOT / "src/helpers/GmsStartup.java"], output / "helper-compile.log")
+    helper_dex = output / "helper-dex"
+    helper_dex.mkdir()
+    run(["java", "-cp", args.d8_jar.resolve(), "com.android.tools.r8.D8", "--min-api", "32", "--output", helper_dex,
+         *sorted(helper_classes.rglob("*.class"))], output / "helper-d8.log")
     built = output / "patched"
     print("Applying hooks and comparing all assembled DEX classes...", flush=True)
     validation = run(["java", "-Xmx1024m", "-cp", str(classes) + os.pathsep + classpath,
-                      "NonRootMusic", merged, built], output / "dex-validation.log")
+                      "NonRootMusic", merged, built, helper_dex / "classes.dex"], output / "dex-validation.log")
     if f"Built {PACKAGE}" not in validation or validation.count("Validated assembled classes") != 6:
         raise RuntimeError("Incomplete DEX validation")
     run([sys.executable, ROOT / "tools/fix_resource_specs.py", "--input-dir", staged, "--build-dir", built], output / "resource-repair.log")
@@ -167,7 +175,7 @@ def main():
         run(["apksigner", "sign", "--ks", key, "--ks-key-alias", alias, "--ks-pass", "file:" + str(password), "--out", apk, aligned])
     untouched = validate_package(apk, merged, output, not args.unsigned)
     result = {"package": PACKAGE, "version": "9.40.51", "apk_sha256": sha256(apk), "apk_bytes": apk.stat().st_size,
-              "signed": not args.unsigned, "runtime_verified": False, "dex_roundtrip_validated_classes": 38180,
+              "signed": not args.unsigned, "runtime_verified": False, "dex_roundtrip_validated_classes": 38181, "original_classes_preserved": 38180, "helper_classes_added": 1, "hook_count": 7, "startup_dependency_check": True,
               "unchanged_native_library_and_asset_members": untouched}
     (output / "validation.json").write_text(json.dumps(result, indent=2) + "\n")
     (output / "SHA256SUMS.txt").write_text(result["apk_sha256"] + "  " + apk.name + "\n")

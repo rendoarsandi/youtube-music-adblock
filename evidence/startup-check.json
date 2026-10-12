@@ -1,0 +1,18 @@
+{
+  "method": "Lcom/google/android/apps/youtube/music/activities/MusicActivity;->onCreate(Landroid/os/Bundle;)V",
+  "dex": "classes.dex",
+  "flags": 20,
+  "registers": 28,
+  "receiver_register": 26,
+  "insert_before_code_unit": 0,
+  "original_instructions_sha256": "21efe3e6440729a9a53df353d183e8f1c27a64f93abe66ef192296252d809ffc",
+  "helper": "Lapp/local/youtube/adblock/GmsStartup;->check(Ljava/lang/Object;)V",
+  "helper_source_sha256": "be48cb63cdcb73856a7539f600c4cbac9344eb1f79c5c8731eeb9c9b24743cc1",
+  "account_values_queried": false,
+  "update_checks": false,
+  "runtime_tested": false,
+  "user_report": "Opening microG once resolved launch failure for YouTube; Music likewise launched after installing/opening GmsCore.",
+  "reflected_android_api_linkage_verified_on_device": true,
+  "device_android_version": "16",
+  "startup_hook_runtime_tested": false
+}

@@ -1,4 +1,6 @@
 import java.io.StringWriter;
+import java.security.MessageDigest;
+import com.android.tools.smali.dexlib2.dexbacked.instruction.DexBackedInstruction;
 import java.net.URI;
 import java.nio.file.*;
 import java.util.*;
@@ -57,7 +59,8 @@ public final class NonRootMusic {
         "Lqci;->a()Z", "prime",
         "Lxhv;->a(Llnh;)V", "cast-context",
         "Laty;->d(Landroid/content/Context;Ljava/lang/String;)Leff;", "file-provider",
-        "Lacec;->d(Z)V", "ads");
+        "Lacec;->d(Z)V", "ads",
+        "Lcom/google/android/apps/youtube/music/activities/MusicActivity;->onCreate(Landroid/os/Bundle;)V", "gms-startup");
 
     static void require(boolean value, String message) {
         if (!value) throw new IllegalStateException(message);
@@ -148,6 +151,15 @@ public final class NonRootMusic {
                 case "cast-context": require(strings.contains("Error fetching CastContext."), "Cast fingerprint changed"); break;
                 case "prime": require(strings.containsAll(Set.of("com.android.vending", "com.google.android.GoogleCamera", FROM)), "Prime fingerprint changed"); break;
                 case "file-provider": require(strings.containsAll(Set.of("android.support.FILE_PROVIDER_PATHS", "Name must not be empty")), "Provider fingerprint changed"); break;
+                case "gms-startup":
+                    require(method.getAccessFlags() == 20 && body.getRegisterCount() == 28, "Startup frame changed");
+                    DexBackedInstruction first = (DexBackedInstruction)original.get(0);
+                    int units = original.stream().mapToInt(Instruction::getCodeUnits).sum();
+                    try {
+                        String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(first.dexFile.getDataBuffer().readByteRange(first.instructionStart, units * 2)));
+                        require(digest.equals("21efe3e6440729a9a53df353d183e8f1c27a64f93abe66ef192296252d809ffc"), "Startup instruction digest changed");
+                    } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+                    break;
                 case "ads":
                     require(body.getRegisterCount() == 2 && body.getTryBlocks().isEmpty() && original.size() == 3
                         && original.get(0).getOpcode() == Opcode.IPUT_BOOLEAN && original.get(1).getOpcode() == Opcode.INVOKE_VIRTUAL
@@ -197,6 +209,14 @@ public final class NonRootMusic {
                 provider.addInstruction(0, new BuilderInstruction21c(Opcode.CONST_STRING, 0, new ImmutableStringReference(authority)));
             }
             updated = provider;
+        }
+        if ("gms-startup".equals(hook)) {
+            MutableMethodImplementation startup = new MutableMethodImplementation(updated);
+            BuilderInstruction displaced = startup.getInstructions().get(0);
+            startup.replaceInstruction(0, new BuilderInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 26, 1,
+                new ImmutableMethodReference("Lapp/local/youtube/adblock/GmsStartup;", "check", List.of("Ljava/lang/Object;"), "V")));
+            startup.addInstruction(1, displaced);
+            updated = startup;
         }
         if (!modified && hook == null) return ImmutableMethod.of(method);
         return new ImmutableMethod(method.getDefiningClass(), method.getName(), method.getParameters(), method.getReturnType(),
@@ -273,6 +293,14 @@ public final class NonRootMusic {
             List<String> dexFiles = zip.stream().map(ZipEntry::getName).filter(n -> n.matches("classes(?:[2-9][0-9]*)?\\.dex")).sorted().toList();
             require(dexFiles.size() == 6, "Unexpected DEX count");
             for (String name : dexFiles) rewriteDex(module, name, zip.getInputStream(zip.getEntry(name)).readAllBytes(), output);
+            DexBackedDexFile helper = new DexBackedDexFile(null, Files.readAllBytes(Path.of(args[2])));
+            require(helper.getClasses().size() == 1 && helper.getClasses().iterator().next().getType().equals("Lapp/local/youtube/adblock/GmsStartup;"), "Unexpected startup helper classes");
+            Path helperPath = output.resolve("classes7.dex");
+            DexPool.writeTo(helperPath.toString(), ImmutableDexFile.of(helper));
+            DexBackedDexFile assembled = new DexBackedDexFile(null, Files.readAllBytes(helperPath));
+            require(assembled.getClasses().size() == 1 && render(helper.getClasses().iterator().next()).equals(render(assembled.getClasses().iterator().next())), "Startup helper assembly differs");
+            module.add(new ByteInputSource(Files.readAllBytes(helperPath), "classes7.dex"));
+            System.out.println("Validated helper classes7.dex: 1 class.");
             require(SEEN_HOOKS.equals(new HashSet<>(HOOKS.values())), "Missing hooks " + SEEN_HOOKS);
             module.setApkSignatureBlock(null); module.removeInputSource("stamp-cert-sha256");
             for (com.reandroid.archive.InputSource input : module.listInputSources()) {

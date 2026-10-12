@@ -36,3 +36,9 @@ APKEditor retained sparse resource entry IDs during the split merge, but shorten
 All six assembled DEX files matched their intended transformed definitions across 38,180 classes. APK signature, ZIP CRC, alignment and manifest identity checks passed. Native libraries and non-profile assets were compared with the merged original.
 
 Unknowns: login, sustained playback, actual ad suppression, casting, Android Auto, reflection/dynamic loading, downloaded configuration, native implementation details and server-side enforcement. No account-risk estimate or compliance guarantee is made. Read the README's experimental-status section before testing.
+
+## GmsCore startup follow-up
+
+The user reported that missing GmsCore caused an immediate close; installing it and opening its microG screen once allowed Music to launch. The same setup step subsequently resolved YouTube's reported launch failure. These are user observations, not verified playback/ad suppression or a captured exception.
+
+The startup check is inserted before original `MusicActivity.onCreate(Bundle)` at CU0. Original flags20,registers28 and instruction digest `21efe3e6440729a9a53df353d183e8f1c27a64f93abe66ef192296252d809ffc` are guarded; p0 is physical v26. Missing/disabled GmsCore receives guidance and an upstream-style graceful exit. Its public provider is acquired and closed without reading values/accounts. Provider failure gives setup guidance; update checks and battery permission dialogs are omitted.

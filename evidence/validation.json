@@ -1,21 +1,14 @@
 {
-  "status": "nonroot_side_by_side_experiment_built",
-  "runtime_verified": false,
   "package": "app.revanced.android.apps.youtube.music",
   "version": "9.40.51",
-  "label": "YT Music (Ad test)",
-  "apk_sha256": "f2a1e7895451eededdf08353c7eaeec9f422eb46e9cc9bd9c4904cc38fb58778",
-  "apk_bytes": 61655437,
-  "gmscore_sha256": "62119f040d629a9cd3225f280649a464936730c6466cafb5b9dd5ded14269a65",
-  "signatures_verified": true,
-  "zip_crc_verified": true,
-  "alignment_verified": true,
-  "dex_roundtrip_validated_classes": 38180,
-  "unchanged_native_library_and_asset_members": 291,
-  "limits": [
-    "Not installed or launched by the builder",
-    "Login, playback and ad blocking require device testing",
-    "Cast-context compatibility method returns early",
-    "No ReVanced settings or startup GmsCore check added"
-  ]
+  "apk_sha256": "4a0a6531ae7892a70036f308e3f84f4db0ec463a7512fb4fdbe29bf6cd649ea8",
+  "apk_bytes": 61659591,
+  "signed": true,
+  "runtime_verified": false,
+  "dex_roundtrip_validated_classes": 38181,
+  "original_classes_preserved": 38180,
+  "helper_classes_added": 1,
+  "hook_count": 7,
+  "startup_dependency_check": true,
+  "unchanged_native_library_and_asset_members": 291
 }
