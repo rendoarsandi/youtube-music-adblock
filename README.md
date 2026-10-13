@@ -6,7 +6,7 @@ The code forces a candidate ad-state input to false and adapts the app to use Re
 
 ## Download and install
 
-The APK is attached to the [experimental prerelease](https://github.com/rendoarsandi/youtube-music-adblock/releases/tag/v0.1.1-startup-check), rather than stored in Git. It is approximately 61.7 MB (58.8 MiB).
+The APK is attached to the [experimental prerelease](https://github.com/rendoarsandi/youtube-music-adblock/releases/tag/v0.1.1), rather than stored in Git. It is approximately 61.7 MB (58.8 MiB).
 
 1. Install the standard, non-Huawei APK from the [official ReVanced GmsCore v0.3.13.2.250932 release](https://github.com/ReVanced/GmsCore/releases/tag/v0.3.13.2.250932). **Open its microG screen once before launching this app.** Allow it to run in the background; Google sign-in is separate.
 2. Install `YT-Music-Ad-Test-9.40.51.apk` from this project's prerelease.
@@ -44,7 +44,7 @@ Do not post passwords, authentication codes, tokens or personal account data in 
 | File sharing | Adds the upstream-style file-provider compatibility guard. |
 | Resources | Merges the four installed APKs and restores sparse type-spec counts and flags from the original set. |
 
-The upstream fingerprint matched once. All seven startup/compatibility/ad hooks matched once. Assembly round-trip comparison covered 38,181 classes, preserving all 38,180 original classes. Annotation ordering and equivalent default static values are normalized; array element order is retained. APK signatures, ZIP CRCs, package metadata and alignment passed validation. The build also compared 291 native-library/asset members with the merged original. See [evidence](evidence/validation.json).
+The upstream fingerprint matched once. All seven startup/compatibility/ad hooks matched once. Assembly round-trip comparison covered 38,181 classes, preserving all 38,180 original classes. Annotation ordering and equivalent default static values are normalized; array element order is retained. APK signatures, ZIP CRCs, package metadata and alignment passed validation. The build also compared 291 native-library/asset members with the merged original.
 
 ## Build locally
 
@@ -95,7 +95,6 @@ The included Kotlin file is an additional patch-source example. The standalone b
 - `tools/fix_resource_specs.py`: original-resource provenance repair.
 - `tools/inspect_dex.py`: read-only DEX fingerprint/reference inspection; pass your private APK directory as its argument.
 - `docs/findings.md`: observations, inferences and unresolved runtime questions.
-- `evidence/`: bounded static results and published APK checksum.
 
 ## Attribution and license
 
