@@ -31,8 +31,12 @@ import com.reandroid.arsc.chunk.xml.*;
  * No account handling, networking, target execution or installation here.
  */
 public final class NonRootMusic {
+    // The original primary DEX reference pool is full. Keep the instrumented
+    // Cronet callback in the helper DEX so its two new references fit.
+    static final List<ClassDef> RELOCATED = new ArrayList<>();
     static final String FROM = "com.google.android.apps.youtube.music";
-    static final String TO = "app.revanced.android.apps.youtube.music";
+    static String TO = "app.revanced.android.apps.youtube.music";
+    static String LABEL = "YouTube Music Adblock";
     static final String GMS = "app.revanced.android.gms";
     static final Set<String> GMS_PERMISSIONS = Set.of(
         "com.google.android.providers.gsf.permission.READ_GSERVICES", "com.google.android.c2dm.permission.RECEIVE",
@@ -60,6 +64,8 @@ public final class NonRootMusic {
         "Lxhv;->a(Llnh;)V", "cast-context",
         "Laty;->d(Landroid/content/Context;Ljava/lang/String;)Leff;", "file-provider",
         "Lacec;->d(Z)V", "ads",
+        "Laafk;->q(Lalqw;)Z", "background",
+        "Ljlm;->C()Z", "exclusive-audio",
         "Lcom/google/android/apps/youtube/music/activities/MusicActivity;->onCreate(Landroid/os/Bundle;)V", "gms-startup");
 
     static void require(boolean value, String message) {
@@ -124,11 +130,12 @@ public final class NonRootMusic {
             }
         }
         module.setPackageName(TO);
+        manifest.setVersionCode(94051242);
         for (com.reandroid.arsc.chunk.PackageBlock tablePackage : module.getTableBlock()) {
             if (FROM.equals(tablePackage.getName())) tablePackage.setName(TO);
         }
-        manifest.setApplicationLabel("YT Music (Ad test)");
-        named(manifest.getMainActivity(), "label", "YT Music (Ad test)");
+        manifest.setApplicationLabel(LABEL);
+        named(manifest.getMainActivity(), "label", LABEL);
         ResXmlElement query = root.getOrCreateElement("queries").newElement("package"); named(query, "name", GMS);
         metadata(app, GMS + ".SPOOFED_PACKAGE_NAME", FROM);
         metadata(app, GMS + ".SPOOFED_PACKAGE_SIGNATURE", "afb0fed5eeaebdd86f56a97742f4b6b33ef59875");
@@ -160,6 +167,30 @@ public final class NonRootMusic {
                         require(digest.equals("21efe3e6440729a9a53df353d183e8f1c27a64f93abe66ef192296252d809ffc"), "Startup instruction digest changed");
                     } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
                     break;
+                case "exclusive-audio":
+                    require(method.getAccessFlags() == 17 && body.getRegisterCount() == 3,
+                        "Exclusive audio eligibility frame changed");
+                    DexBackedInstruction audioFirst = (DexBackedInstruction) original.get(0);
+                    int audioUnits = original.stream().mapToInt(Instruction::getCodeUnits).sum();
+                    try {
+                        String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(
+                            audioFirst.dexFile.getDataBuffer().readByteRange(audioFirst.instructionStart, audioUnits * 2)));
+                        require(digest.equals("fdd2bc0022841552434d0500db573c13ca60b227bb3d13adb88bcbc5f7f19597"),
+                            "Exclusive audio eligibility instructions changed");
+                    } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+                    break;
+                case "background":
+                    require(method.getAccessFlags() == 9 && body.getRegisterCount() == 4,
+                        "Background eligibility frame changed");
+                    DexBackedInstruction backgroundFirst = (DexBackedInstruction) original.get(0);
+                    int backgroundUnits = original.stream().mapToInt(Instruction::getCodeUnits).sum();
+                    try {
+                        String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(
+                            backgroundFirst.dexFile.getDataBuffer().readByteRange(backgroundFirst.instructionStart, backgroundUnits * 2)));
+                        require(digest.equals("8dac959396c690fd529f06eb28f25a385f6ac18d76aa6c4561ae338acb73de04"),
+                            "Background eligibility instructions changed");
+                    } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
+                    break;
                 case "ads":
                     require(body.getRegisterCount() == 2 && body.getTryBlocks().isEmpty() && original.size() == 3
                         && original.get(0).getOpcode() == Opcode.IPUT_BOOLEAN && original.get(1).getOpcode() == Opcode.INVOKE_VIRTUAL
@@ -182,8 +213,13 @@ public final class NonRootMusic {
             code.add(i);
         }
         MethodImplementation updated = new ImmutableMethodImplementation(body.getRegisterCount(), code, body.getTryBlocks(), body.getDebugItems());
-        if ("availability".equals(hook)) {
-            updated = new ImmutableMethodImplementation(body.getRegisterCount(), List.of(new ImmutableInstruction11n(Opcode.CONST_4, 0, 0), new ImmutableInstruction11x(Opcode.RETURN, 0)), List.of(), List.of());
+        if ("availability".equals(hook) || "background".equals(hook) || "exclusive-audio".equals(hook)) {
+            // ReVanced's Music background-playback eligibility override, adapted
+            // to the guarded 9.40.51 method on 2026-10-28. Evaluated for every
+            // request, so switching accounts cannot restore the old restriction.
+            // Exclusive-audio is a separate upstream Music patch. Its account
+            // cache accessor also guards hzu's persistent audio-preference reset.
+            updated = new ImmutableMethodImplementation(body.getRegisterCount(), List.of(new ImmutableInstruction11n(Opcode.CONST_4, 0, "availability".equals(hook) ? 0 : 1), new ImmutableInstruction11x(Opcode.RETURN, 0)), List.of(), List.of());
         } else if ("service-check".equals(hook) || "cast-context".equals(hook)) {
             updated = new ImmutableMethodImplementation(body.getRegisterCount(), List.of(new ImmutableInstruction10x(Opcode.RETURN_VOID)), List.of(), List.of());
         } else if ("ads".equals(hook)) {
@@ -218,7 +254,14 @@ public final class NonRootMusic {
             startup.addInstruction(1, displaced);
             updated = startup;
         }
-        if (!modified && hook == null) return ImmutableMethod.of(method);
+        String trace = RuntimeHooks.hook(id(method));
+        if (trace != null) {
+            require(!modified && hook == null, "Runtime tracing overlaps a feature hook");
+            require(SEEN_HOOKS.add(trace), "Duplicate runtime trace hook");
+            updated = RuntimeHooks.apply(method);
+            count("hook:" + trace);
+        }
+        if (!modified && hook == null && trace == null) return ImmutableMethod.of(method);
         return new ImmutableMethod(method.getDefiningClass(), method.getName(), method.getParameters(), method.getReturnType(),
             method.getAccessFlags(), method.getAnnotations(), method.getHiddenApiRestrictions(), updated);
     }
@@ -265,7 +308,11 @@ public final class NonRootMusic {
             List<Method> direct = new ArrayList<>(), virtual = new ArrayList<>();
             for (Method m : c.getDirectMethods()) direct.add(patch(m));
             for (Method m : c.getVirtualMethods()) virtual.add(patch(m));
-            expectedClasses.add(new ImmutableClassDef(c.getType(), c.getAccessFlags(), c.getSuperclass(), c.getInterfaces(), c.getSourceFile(), c.getAnnotations(), c.getStaticFields(), c.getInstanceFields(), direct, virtual));
+            ClassDef patched = new ImmutableClassDef(c.getType(), c.getAccessFlags(), c.getSuperclass(), c.getInterfaces(), c.getSourceFile(), c.getAnnotations(), c.getStaticFields(), c.getInstanceFields(), direct, virtual);
+            if (c.getType().equals("Lbza;")) {
+                require(name.equals("classes.dex") && RELOCATED.isEmpty(), "Unexpected callback location");
+                RELOCATED.add(patched);
+            } else expectedClasses.add(patched);
         }
         ImmutableDexFile expected = new ImmutableDexFile(before.getOpcodes(), expectedClasses);
         Path dexPath = output.resolve(name); require(!Files.exists(dexPath), "DEX output exists"); DexPool.writeTo(dexPath.toString(), expected);
@@ -287,6 +334,11 @@ public final class NonRootMusic {
         System.out.println("Validated assembled " + name + ": " + actualClasses.size() + " classes.");
     }
     public static void main(String[] args) throws Exception {
+        require(args.length == 3 || (args.length == 4 && args[3].equals("--side-by-side")), "Unexpected build arguments");
+        if (args.length == 4) {
+            TO = "app.local.youtube.music";
+            LABEL = "YouTube Music Adblock";
+        }
         Path output = Path.of(args[1]).toAbsolutePath(); require(!Files.exists(output), "Output directory exists"); Files.createDirectories(output);
         try (ApkModule module = ApkModule.loadApkFile(Path.of(args[0]).toFile()); ZipFile zip = new ZipFile(args[0])) {
             patchManifest(module);
@@ -294,14 +346,30 @@ public final class NonRootMusic {
             require(dexFiles.size() == 6, "Unexpected DEX count");
             for (String name : dexFiles) rewriteDex(module, name, zip.getInputStream(zip.getEntry(name)).readAllBytes(), output);
             DexBackedDexFile helper = new DexBackedDexFile(null, Files.readAllBytes(Path.of(args[2])));
-            require(helper.getClasses().size() == 1 && helper.getClasses().iterator().next().getType().equals("Lapp/local/youtube/adblock/GmsStartup;"), "Unexpected startup helper classes");
+            require(helper.getClasses().size() >= 2 && helper.getClasses().size() <= 16, "Unexpected helper count");
+            Set<String> helperTypes = new HashSet<>();
+            for (ClassDef c : helper.getClasses()) {
+                helperTypes.add(c.getType());
+                require(c.getType().equals("Lapp/local/youtube/adblock/GmsStartup;")
+                    || c.getType().startsWith("Lapp/local/youtube/adblock/RuntimeDiagnostics")
+                    || c.getType().equals("Lcom/android/tools/r8/annotations/LambdaMethod;"), "Unexpected helper namespace");
+            }
+            require(helperTypes.contains("Lapp/local/youtube/adblock/RuntimeDiagnostics;"), "Missing runtime reporter");
+            require(RELOCATED.size() == 1, "Missing relocated Cronet callback");
+            List<ClassDef> helperAndRelocated = new ArrayList<>();
+            helperAndRelocated.addAll(helper.getClasses()); helperAndRelocated.addAll(RELOCATED);
             Path helperPath = output.resolve("classes7.dex");
-            DexPool.writeTo(helperPath.toString(), ImmutableDexFile.of(helper));
+            DexPool.writeTo(helperPath.toString(), new ImmutableDexFile(helper.getOpcodes(), helperAndRelocated));
             DexBackedDexFile assembled = new DexBackedDexFile(null, Files.readAllBytes(helperPath));
-            require(assembled.getClasses().size() == 1 && render(helper.getClasses().iterator().next()).equals(render(assembled.getClasses().iterator().next())), "Startup helper assembly differs");
+            Map<String, ClassDef> foundHelpers = new HashMap<>();
+            for (ClassDef c : assembled.getClasses()) foundHelpers.put(c.getType(), c);
+            require(foundHelpers.size() == helperAndRelocated.size(), "Helper count changed");
+            for (ClassDef c : helperAndRelocated) require(render(c).equals(render(foundHelpers.get(c.getType()))), "Helper assembly differs: " + c.getType());
+            Files.writeString(output.resolve("helper-count.txt"), Integer.toString(helper.getClasses().size()));
             module.add(new ByteInputSource(Files.readAllBytes(helperPath), "classes7.dex"));
-            System.out.println("Validated helper classes7.dex: 1 class.");
-            require(SEEN_HOOKS.equals(new HashSet<>(HOOKS.values())), "Missing hooks " + SEEN_HOOKS);
+            System.out.println("Validated helper classes7.dex: " + helper.getClasses().size() + " helper classes and one preserved callback.");
+            Set<String> expectedHooks = new HashSet<>(HOOKS.values()); expectedHooks.addAll(RuntimeHooks.hooks());
+            require(SEEN_HOOKS.equals(expectedHooks), "Missing hooks " + SEEN_HOOKS);
             module.setApkSignatureBlock(null); module.removeInputSource("stamp-cert-sha256");
             for (com.reandroid.archive.InputSource input : module.listInputSources()) {
                 if (input.getAlias().matches("META-INF/(?:MANIFEST\\.MF|[^/]+\\.(?:SF|RSA|DSA|EC))")) module.removeInputSource(input.getAlias());

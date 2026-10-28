@@ -29,6 +29,8 @@ DEPENDENCIES = {
         "a9cd40df818845456be6d696de6110c89edf4b0a0580cb83438ed6b25a366e67"),
 }
 PACKAGE = "app.revanced.android.apps.youtube.music"
+LABEL = "YouTube Music Adblock"
+PATCH_VERSION = "v0.1.4"
 
 
 def sha256(path):
@@ -71,7 +73,7 @@ def validate_package(apk, merged, output, signed):
         run(["apksigner", "verify", "--verbose", "--print-certs", apk], output / "signature-verification.txt")
     badging = run(["aapt", "dump", "badging", apk], output / "badging.txt")
     manifest = run(["aapt", "dump", "xmltree", apk, "AndroidManifest.xml"], output / "manifest.txt")
-    if f"name='{PACKAGE}'" not in badging or "versionName='9.40.51'" not in badging or "YT Music (Ad test)" not in badging:
+    if f"name='{PACKAGE}'" not in badging or "versionName='9.40.51'" not in badging or "versionCode='94051242'" not in badging or LABEL not in badging:
         raise RuntimeError("Unexpected APK identity")
     for metadata in ["app.revanced.android.gms.SPOOFED_PACKAGE_NAME", "app.revanced.android.gms.SPOOFED_PACKAGE_SIGNATURE", "app.revanced.MICROG_PACKAGE_NAME"]:
         if metadata not in manifest:
@@ -100,8 +102,16 @@ def signing_key(args, output):
         return key, password, args.key_alias
     if args.password_file:
         raise ValueError("--password-file requires --keystore")
-    key = output / "local-signing.p12"
-    password = output / "signing-password.txt"
+    # Keep update identity outside disposable build outputs and reuse it.
+    signing_dir = Path.home() / ".local/share/youtube-music-adblock/signing"
+    signing_dir.mkdir(parents=True, exist_ok=True)
+    signing_dir.chmod(0o700)
+    key = signing_dir / "local-signing.p12"
+    password = signing_dir / "signing-password.txt"
+    if key.exists() or password.exists():
+        if not key.is_file() or not password.is_file():
+            raise ValueError("Incomplete persistent signing material; refusing to replace the update key")
+        return key, password, "local-experiment"
     descriptor = os.open(password, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as stream:
         stream.write(secrets.token_hex(24) + "\n")
@@ -114,6 +124,7 @@ def signing_key(args, output):
 
 
 def main():
+    global PACKAGE, LABEL
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", type=Path, required=True, help="Directory containing the four exact installed APKs")
     parser.add_argument("--output-dir", type=Path, help="New directory for intermediate files and the final APK")
@@ -123,7 +134,10 @@ def main():
     parser.add_argument("--password-file", type=Path, help="Private file containing the keystore password")
     parser.add_argument("--key-alias", default="local-experiment")
     parser.add_argument("--d8-jar", type=Path, required=True, help="D8 compiler JAR for the startup dependency helper")
+    parser.add_argument("--side-by-side", action="store_true", help="Build a separate app to preserve the installed app when its old signing key is unavailable")
     args = parser.parse_args()
+    if args.side_by_side:
+        PACKAGE, LABEL = "app.local.youtube.music", "YouTube Music Adblock"
     required = ["java", "javac", "aapt", "zipalign"] + ([] if args.unsigned else ["apksigner", "keytool"])
     for command in required:
         if not shutil.which(command):
@@ -150,10 +164,10 @@ def main():
     classes = output / "builder-classes"
     classes.mkdir()
     classpath = os.pathsep.join(str(path) for path in jars)
-    run(["javac", "-cp", classpath, "-d", classes, ROOT / "src/NonRootMusic.java"], output / "compile.log")
+    run(["javac", "-cp", classpath, "-d", classes, *sorted((ROOT / "src").glob("*.java"))], output / "compile.log")
     helper_classes = output / "helper-classes"
     helper_classes.mkdir()
-    run(["javac", "--release", "8", "-Xlint:-options", "-d", helper_classes, ROOT / "src/helpers/GmsStartup.java"], output / "helper-compile.log")
+    run(["javac", "--release", "8", "-Xlint:-options", "-d", helper_classes, *sorted((ROOT / "src/helpers").glob("*.java"))], output / "helper-compile.log")
     helper_dex = output / "helper-dex"
     helper_dex.mkdir()
     run(["java", "-cp", args.d8_jar.resolve(), "com.android.tools.r8.D8", "--min-api", "32", "--output", helper_dex,
@@ -161,21 +175,23 @@ def main():
     built = output / "patched"
     print("Applying hooks and comparing all assembled DEX classes...", flush=True)
     validation = run(["java", "-Xmx1024m", "-cp", str(classes) + os.pathsep + classpath,
-                      "NonRootMusic", merged, built, helper_dex / "classes.dex"], output / "dex-validation.log")
+                      "NonRootMusic", merged, built, helper_dex / "classes.dex", *(["--side-by-side"] if args.side_by_side else [])], output / "dex-validation.log")
     if f"Built {PACKAGE}" not in validation or validation.count("Validated assembled classes") != 6:
         raise RuntimeError("Incomplete DEX validation")
     run([sys.executable, ROOT / "tools/fix_resource_specs.py", "--input-dir", staged, "--build-dir", built], output / "resource-repair.log")
     aligned = output / "aligned.apk"
     run(["zipalign", "-P", "16", "4", built / "music-resources-fixed.apk", aligned])
-    apk = output / ("YT-Music-Ad-Test-9.40.51-unsigned.apk" if args.unsigned else "YT-Music-Ad-Test-9.40.51.apk")
+    apk = output / (f"YouTube-Music-Adblock-{PATCH_VERSION}" + ("-unsigned" if args.unsigned else "") + ".apk")
     if args.unsigned:
         shutil.copyfile(aligned, apk)
     else:
         key, password, alias = signing_key(args, output)
         run(["apksigner", "sign", "--ks", key, "--ks-key-alias", alias, "--ks-pass", "file:" + str(password), "--out", apk, aligned])
     untouched = validate_package(apk, merged, output, not args.unsigned)
+    helper_count = int((built / "helper-count.txt").read_text())
     result = {"package": PACKAGE, "version": "9.40.51", "apk_sha256": sha256(apk), "apk_bytes": apk.stat().st_size,
-              "signed": not args.unsigned, "runtime_verified": False, "dex_roundtrip_validated_classes": 38181, "original_classes_preserved": 38180, "helper_classes_added": 1, "hook_count": 7, "startup_dependency_check": True,
+              "signed": not args.unsigned, "runtime_verified": False, "dex_roundtrip_validated_classes": 38180 + helper_count, "original_classes_preserved": 38180, "helper_classes_added": helper_count, "hook_count": 15, "startup_dependency_check": True,
+              "runtime_trace_hook_count": 6, "version_code": 94051242, "label": LABEL, "background_playback_hook_count": 1, "exclusive_audio_hook_count": 1, "patch_version": PATCH_VERSION, "side_by_side": args.side_by_side,
               "unchanged_native_library_and_asset_members": untouched}
     (output / "validation.json").write_text(json.dumps(result, indent=2) + "\n")
     (output / "SHA256SUMS.txt").write_text(result["apk_sha256"] + "  " + apk.name + "\n")

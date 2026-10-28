@@ -6,6 +6,7 @@ import java.lang.reflect.*;
 public final class GmsStartup {
     private static final String PACKAGE = "app.revanced.android.gms";
     public static void check(Object activity) {
+        RuntimeDiagnostics.install(activity);
         try {
             Class<?> context = Class.forName("android.content.Context");
             Object manager = context.getMethod("getPackageManager").invoke(activity);
